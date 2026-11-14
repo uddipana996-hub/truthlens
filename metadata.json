@@ -1,0 +1,6 @@
+{
+  "name": "TRUTHLENS AI",
+  "description": "Think Critically. Share Responsibly. An evidence-based social media fact-checking platform powered by Gemini and Google Search grounding.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
