@@ -25,7 +25,7 @@ export async function extractMetaPost(
       text: null,
       note: 'Threads does not currently provide an unauthenticated public post text retrieval endpoint.',
       failureReason:
-        'Automatic Threads post retrieval is not supported without authorized API access. TruthLens AI never scrapes or bypasses platform login screens.',
+        'Automatic Threads post retrieval is not supported without authorized API access. TruthLens never scrapes or bypasses platform login screens.',
       fallbackSuggestion:
         'Copy and paste the Threads post text into the "Paste Text" tab, or upload a screenshot in the "Upload Screenshot" tab.',
     };
@@ -43,7 +43,7 @@ export async function extractMetaPost(
       title: null,
       text: null,
       note: `${platformLabel} official Meta oEmbed requires a configured META_ACCESS_TOKEN on the server.`,
-      failureReason: `Official ${platformLabel} oEmbed retrieval is unavailable because META_ACCESS_TOKEN is not configured. TruthLens AI does not scrape private pages or bypass login walls.`,
+      failureReason: `Official ${platformLabel} oEmbed retrieval is unavailable because META_ACCESS_TOKEN is not configured. TruthLens does not scrape private pages or bypass login walls.`,
       fallbackSuggestion:
         'Paste the post caption or forwarded text directly below, or upload a screenshot of the post.',
     };

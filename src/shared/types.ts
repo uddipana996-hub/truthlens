@@ -90,6 +90,8 @@ export interface FactCheckResponse {
   limitations: string[];
   submission: SubmissionMetadata;
   researchedAt: string;
+  isDemo?: boolean;
+  demoNote?: string;
 }
 
 export interface SocialExtractionResult {
@@ -106,16 +108,38 @@ export interface SocialExtractionResult {
   fallbackSuggestion: string;
 }
 
+export type ServerKeyHealthStatus =
+  | 'verified'
+  | 'unverified'
+  | 'invalid_key'
+  | 'auth_failed'
+  | 'quota_exceeded'
+  | 'model_unavailable'
+  | 'connection_failed'
+  | 'not_configured';
+
 export interface HealthStatusResponse {
   status: 'ok';
   serverKeyConfigured: boolean;
+  serverKeyStatus: ServerKeyHealthStatus;
+  serverKeyMessage?: string;
   metaConfigured: boolean;
   xConfigured: boolean;
   model: string;
 }
 
+export type KeyVerificationStatus =
+  | 'connected'
+  | 'invalid_key'
+  | 'auth_failed'
+  | 'quota_exceeded'
+  | 'model_unavailable'
+  | 'connection_failed'
+  | 'error';
+
 export interface TestKeyResponse {
   success: boolean;
-  connectionStatus: 'connected' | 'invalid_key' | 'quota_exceeded' | 'error';
+  connectionStatus: KeyVerificationStatus;
   message: string;
+  activeModel?: string;
 }

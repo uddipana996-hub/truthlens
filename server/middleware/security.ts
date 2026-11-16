@@ -73,9 +73,14 @@ export function createRateLimiter(options: { windowMs: number; maxRequests: numb
  */
 export function sanitizeErrorMessage(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err ?? 'Unknown error');
-  // Never leak AIza... Gemini keys or Bearer tokens in error messages
+  // Never leak AIza..., AQ..., ya29..., 1//..., JWTs, Bearer tokens, or query key params in error messages or logs
   return raw
-    .replace(/AIza[0-9A-Za-z_-]{20,}/g, '[REDACTED_KEY]')
-    .replace(/Bearer\s+[0-9A-Za-z._-]+/gi, 'Bearer [REDACTED]')
+    .replace(/AIza[0-9A-Za-z_-]{16,}/g, '[REDACTED_KEY]')
+    .replace(/AQ\.[0-9A-Za-z._-]{10,}/g, '[REDACTED_TOKEN]')
+    .replace(/ya29\.[0-9A-Za-z._-]{10,}/g, '[REDACTED_TOKEN]')
+    .replace(/1\/\/[0-9A-Za-z._-]{10,}/g, '[REDACTED_TOKEN]')
+    .replace(/eyJ[0-9A-Za-z_-]{8,}\.[0-9A-Za-z._-]{8,}(?:\.[0-9A-Za-z._-]+)?/g, '[REDACTED_JWT]')
+    .replace(/Bearer\s+[0-9A-Za-z._/-]+/gi, 'Bearer [REDACTED]')
+    .replace(/([?&]key=)[^&\s]+/gi, '$1[REDACTED]')
     .slice(0, 400);
 }

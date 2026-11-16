@@ -13,38 +13,38 @@ export const ASSESSMENT_META: Record<
   SUPPORTED: {
     label: 'Supported',
     description: 'Available credible evidence strongly supports this claim.',
-    containerClass: 'border-emerald-500/35 bg-emerald-500/10 text-emerald-100',
-    badgeClass: 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300',
-    dotColor: 'text-emerald-400',
+    containerClass: 'border-emerald-200 bg-emerald-50/75 text-emerald-950',
+    badgeClass: 'border-emerald-300 bg-white text-emerald-700',
+    dotColor: 'text-emerald-600',
   },
   CONTRADICTED: {
     label: 'Contradicted',
     description: 'Reliable retrieved evidence directly contradicts this claim.',
-    containerClass: 'border-rose-500/35 bg-rose-500/10 text-rose-100',
-    badgeClass: 'border-rose-500/40 bg-rose-500/15 text-rose-300',
-    dotColor: 'text-rose-400',
+    containerClass: 'border-rose-200 bg-rose-50/75 text-rose-950',
+    badgeClass: 'border-rose-300 bg-white text-rose-700',
+    dotColor: 'text-rose-600',
   },
   MISLEADING: {
     label: 'Misleading',
     description:
       'Contains some accurate elements but omits critical context or distorts the facts.',
-    containerClass: 'border-orange-500/35 bg-orange-500/10 text-orange-100',
-    badgeClass: 'border-orange-500/40 bg-orange-500/15 text-orange-300',
-    dotColor: 'text-orange-400',
+    containerClass: 'border-orange-200 bg-orange-50/80 text-orange-950',
+    badgeClass: 'border-orange-300 bg-white text-orange-700',
+    dotColor: 'text-orange-600',
   },
   DISPUTED: {
     label: 'Disputed',
     description: 'Credible sources provide conflicting evidence or interpretations.',
-    containerClass: 'border-purple-500/35 bg-purple-500/10 text-purple-100',
-    badgeClass: 'border-purple-500/40 bg-purple-500/15 text-purple-300',
-    dotColor: 'text-purple-400',
+    containerClass: 'border-indigo-200 bg-indigo-50/75 text-indigo-950',
+    badgeClass: 'border-indigo-300 bg-white text-indigo-700',
+    dotColor: 'text-indigo-600',
   },
   NEEDS_VERIFICATION: {
     label: 'Needs Verification',
     description: 'Insufficient reliable evidence was retrieved to reach a conclusion.',
-    containerClass: 'border-slate-400/30 bg-slate-500/10 text-slate-100',
-    badgeClass: 'border-slate-400/35 bg-slate-500/15 text-slate-300',
-    dotColor: 'text-slate-300',
+    containerClass: 'border-slate-200 bg-slate-100/85 text-slate-900',
+    badgeClass: 'border-slate-300 bg-white text-slate-700',
+    dotColor: 'text-slate-600',
   },
 };
 
@@ -52,15 +52,15 @@ export const CONFIDENCE_META: Record<
   ConfidenceLevel,
   { label: string; textClass: string }
 > = {
-  HIGH: { label: 'High Confidence', textClass: 'text-emerald-300' },
-  MEDIUM: { label: 'Medium Confidence', textClass: 'text-sky-300' },
-  LOW: { label: 'Low Confidence', textClass: 'text-amber-300' },
+  HIGH: { label: 'High Confidence', textClass: 'text-emerald-700' },
+  MEDIUM: { label: 'Medium Confidence', textClass: 'text-blue-700' },
+  LOW: { label: 'Low Confidence', textClass: 'text-amber-700' },
 };
 
 export const STANCE_META: Record<SourceStance, { label: string; textClass: string }> = {
-  SUPPORTS: { label: 'Supports Claim', textClass: 'text-emerald-300' },
-  CONTRADICTS: { label: 'Contradicts Claim', textClass: 'text-rose-300' },
-  CONTEXTUALIZES: { label: 'Provides Context', textClass: 'text-sky-300' },
+  SUPPORTS: { label: 'Supports Claim', textClass: 'text-emerald-700' },
+  CONTRADICTS: { label: 'Contradicts Claim', textClass: 'text-rose-700' },
+  CONTEXTUALIZES: { label: 'Provides Context', textClass: 'text-blue-700' },
 };
 
 export function formatPlatformName(platform: string): string {

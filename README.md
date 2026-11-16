@@ -33,7 +33,7 @@ TRUTHLENS AI is an evidence-based social media fact-checking platform. It helps 
 
 - **Frontend**: React 19, TypeScript, Tailwind CSS v4, Lucide React, Motion (`motion/react`)
 - **Backend**: Node.js, Express, TypeScript (`tsx`), Zod validation
-- **AI & Research**: Official `@google/genai` SDK (`gemini-4-hydrogen` default), Google Search Grounding (`googleSearch`), Structured JSON Outputs (`responseSchema`), Multimodal Image Analysis
+- **AI and Research**: Official `@google/genai` SDK (`gemini-3.8-flash` default), Google Search Grounding (`googleSearch`), Structured JSON Outputs (`responseSchema`), Multimodal Image Analysis
 
 ---
 

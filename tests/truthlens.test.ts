@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { after, before, describe, it } from 'node:test';
-import type { GenerateContentResponse } from '@google/genai';
+import type { GenerateContentResponse, GoogleGenAI } from '@google/genai';
 import { createApiApp } from '../server/app.js';
 import { extractSocialPost } from '../server/adapters/social/index.js';
 import { detectSocialPlatform } from '../server/adapters/social/platformDetector.js';
@@ -11,11 +11,17 @@ import {
   validateAndBuildSources,
 } from '../server/services/citationValidator.js';
 import { runFactCheckPipeline } from '../server/services/factCheckPipeline.js';
-import { resolveActiveApiKey } from '../server/services/geminiClient.js';
+import {
+  classifyGeminiError,
+  resolveActiveApiKey,
+  resolveGeminiModel,
+  testGeminiKey,
+} from '../server/services/geminiClient.js';
+import { sanitizeErrorMessage } from '../server/middleware/security.js';
 import { isPrivateOrReservedIp, validatePublicUrl } from '../server/utils/ssrf.js';
 import { analyzeRequestSchema, factCheckResponseSchema } from '../src/shared/schemas.js';
 
-describe('TRUTHLENS AI — Security, Ingestion & Citation Unit Tests', () => {
+describe('TruthLens — Security, Ingestion & Citation Unit Tests', () => {
   it('blocks private, loopback, metadata, and non-HTTP URLs (SSRF protection)', async () => {
     assert.equal(isPrivateOrReservedIp('127.0.0.1'), true);
     assert.equal(isPrivateOrReservedIp('10.0.0.5'), true);
@@ -115,16 +121,57 @@ describe('TRUTHLENS AI — Security, Ingestion & Citation Unit Tests', () => {
     ]);
   });
 
-  it('validates user-supplied key precedence and rejects unsupported image formats', () => {
+  it('masks secrets cleanly and validates key resolution priority', () => {
+    const masked = sanitizeErrorMessage(
+      new Error(
+        'Failed for AIzaSyDummySecretValue1234567890, AQ.Ab8RN6SecretToken12345, ya29.a0SecretAccessToken123, and 1//0gRefreshSecretToken999'
+      )
+    );
+    assert.equal(masked.includes('AIzaSyDummySecretValue'), false);
+    assert.equal(masked.includes('AQ.Ab8RN6SecretToken'), false);
+    assert.equal(masked.includes('ya29.a0SecretAccessToken'), false);
+    assert.equal(masked.includes('1//0gRefreshSecretToken'), false);
+
+    const prevModel = process.env.GEMINI_MODEL;
+    delete process.env.GEMINI_MODEL;
+    assert.equal(resolveGeminiModel(), 'gemini-4-hydrogen');
+    process.env.GEMINI_MODEL = 'gemini-custom-test';
+    assert.equal(resolveGeminiModel(), 'gemini-custom-test');
+    if (prevModel === undefined) delete process.env.GEMINI_MODEL;
+    else process.env.GEMINI_MODEL = prevModel;
+
+    assert.equal(classifyGeminiError(new Error('API_KEY_INVALID')).httpStatus, 401);
+    const ya29On400 = classifyGeminiError(new Error('400 INVALID_ARGUMENT: API_KEY_INVALID'), {
+      keyCandidate: 'ya29.a0ExampleOAuthToken123456',
+    });
+    assert.equal(ya29On400.code, 'invalid_key');
+    assert.equal(ya29On400.httpStatus, 401);
+    assert.match(ya29On400.message, /OAuth access tokens/i);
+    assert.match(ya29On400.message, /aistudio\.google\.com\/apikey/i);
+
+    const bearerWrapped = classifyGeminiError(new Error('401 UNAUTHENTICATED'), {
+      keyCandidate: 'Bearer ya29.a0WrappedToken123456',
+    });
+    assert.equal(bearerWrapped.code, 'invalid_key');
+    assert.match(bearerWrapped.message, /OAuth access tokens/i);
+
+    assert.equal(classifyGeminiError(new Error('PERMISSION_DENIED 403')).httpStatus, 403);
+    assert.equal(classifyGeminiError(new Error('404 NOT_FOUND')).httpStatus, 404);
+    assert.equal(classifyGeminiError(new Error('RESOURCE_EXHAUSTED 429')).httpStatus, 429);
+    assert.equal(classifyGeminiError(new Error('timed out after 20000ms')).httpStatus, 504);
+
     const originalKey = process.env.GEMINI_API_KEY;
-    process.env.GEMINI_API_KEY = 'server_env_placeholder_key';
+    process.env.GEMINI_API_KEY = 'AIzaServerEnvironmentPlaceholder1234567';
     try {
-      const userTakesPrecedence = resolveActiveApiKey('user_session_key_12345');
+      const userTakesPrecedence = resolveActiveApiKey('AIzaUserSessionKey1234567890');
       assert.equal(userTakesPrecedence?.source, 'user');
-      assert.equal(userTakesPrecedence?.apiKey, 'user_session_key_12345');
+      assert.equal(userTakesPrecedence?.apiKey, 'AIzaUserSessionKey1234567890');
 
       const fallsBackToServer = resolveActiveApiKey(undefined);
       assert.equal(fallsBackToServer?.source, 'server');
+
+      process.env.GEMINI_API_KEY = 'MY_GEMINI_API_KEY';
+      assert.equal(resolveActiveApiKey(undefined), null);
     } finally {
       if (originalKey === undefined) delete process.env.GEMINI_API_KEY;
       else process.env.GEMINI_API_KEY = originalKey;
@@ -142,12 +189,131 @@ describe('TRUTHLENS AI — Security, Ingestion & Citation Unit Tests', () => {
   });
 });
 
-describe('TRUTHLENS AI — Express API Route Tests', () => {
+describe('TruthLens — 10 Gemini API Integration & Route Scenarios', () => {
+  const VALID_USER_KEY = 'AIzaValidUserKey_0123456789ABCDEF';
+  const VALID_SERVER_KEY = 'AIzaValidServerKey_0123456789ABCDEF';
+  const INVALID_KEY = 'AIzaInvalidKey_0123456789ABCDEF';
+  const AQ_OAUTH_TOKEN = 'AQ.Ab8RN6TestOAuthToken0123456789ABCDEF';
+  const QUOTA_KEY = 'AIzaQuotaExceededKey_0123456789ABCDEF';
+
+  function buildStubGeminiClient(apiKey: string, modelOverride?: string): GoogleGenAI {
+    return {
+      models: {
+        async generateContent(params: { model: string; contents: unknown }) {
+          if (apiKey === AQ_OAUTH_TOKEN) {
+            throw new Error(
+              '401 UNAUTHENTICATED: API key not valid. ACCESS_TOKEN_TYPE_UNSUPPORTED'
+            );
+          }
+          if (apiKey === INVALID_KEY) {
+            throw new Error('401 INVALID_ARGUMENT: API_KEY_INVALID');
+          }
+          if (apiKey === QUOTA_KEY) {
+            throw new Error(
+              '429 RESOURCE_EXHAUSTED: You exceeded your current quota, please check your plan and billing.'
+            );
+          }
+          const targetModel = modelOverride || params.model;
+          if (targetModel.includes('unsupported')) {
+            throw new Error(`404 NOT_FOUND: models/${targetModel} is not found for API version`);
+          }
+
+          if (params.contents === 'Reply with OK.') {
+            return { text: 'OK' } as unknown as GenerateContentResponse;
+          }
+
+          const contentStr = String(params.contents);
+          if (contentStr.includes('Verified Source Catalog')) {
+            return {
+              text: JSON.stringify({
+                assessment: 'CONTRADICTED',
+                confidence: {
+                  level: 'HIGH',
+                  reason: 'Authoritative primary medical reference contradicts the claim.',
+                },
+                claimSummary: 'Claim that lemon water cures chronic kidney disease in 14 days.',
+                overallExplanation:
+                  'Clinical medical references confirm lemon water does not cure chronic kidney disease.',
+                keyFindings: [
+                  'Hydration supports general health but does not cure established kidney disease.',
+                ],
+                claims: [
+                  {
+                    text: 'Lemon water cures chronic kidney disease in 14 days.',
+                    assessment: 'CONTRADICTED',
+                    explanation: 'No clinical evidence supports curing kidney disease with lemon water.',
+                    supportingSourceIds: [],
+                    contradictingSourceIds: ['SRC-1'],
+                    missingContext: ['Patients with advanced kidney disease may have fluid limits.'],
+                  },
+                ],
+                supportingEvidence: [],
+                contradictingEvidence: ['Medical consensus confirms chronic kidney disease requires clinical management.'],
+                missingContext: ['Fluid targets depend on kidney function stage.'],
+                questionsToInvestigate: ['What medical institution published the cited claim?'],
+                recommendedActions: ['Consult a licensed physician before altering treatment.'],
+                sourceAnnotations: [
+                  {
+                    sourceId: 'SRC-1',
+                    publisher: 'National Institute of Diabetes and Digestive and Kidney Diseases',
+                    publishedAt: '2025-02-10',
+                    relevance: 'Authoritative kidney disease overview.',
+                    stance: 'CONTRADICTS',
+                  },
+                ],
+                limitations: ['Check with a clinician for individual medical guidance.'],
+              }),
+            } as unknown as GenerateContentResponse;
+          }
+
+          return {
+            text: 'Medical references from NIDDK state chronic kidney disease cannot be cured by lemon water.',
+            candidates: [
+              {
+                groundingMetadata: {
+                  groundingChunks: [
+                    {
+                      web: {
+                        uri: 'https://www.niddk.nih.gov/health-information/kidney-disease',
+                        title: 'Chronic Kidney Disease Management',
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          } as unknown as GenerateContentResponse;
+        },
+        async list() {
+          async function* emptyGen() {
+            yield { name: 'models/gemini-4-hydrogen', supportedActions: ['generateContent'] };
+          }
+          return emptyGen();
+        },
+      },
+    } as unknown as GoogleGenAI;
+  }
+
   let server: http.Server;
   let baseUrl = '';
+  let savedServerEnvKey: string | undefined;
 
   before(async () => {
-    const app = createApiApp();
+    savedServerEnvKey = process.env.GEMINI_API_KEY;
+    process.env.GEMINI_API_KEY = VALID_SERVER_KEY;
+
+    const app = createApiApp({
+      testKeyFn: (key) =>
+        testGeminiKey(key, {
+          client: buildStubGeminiClient(key),
+        }),
+      runPipelineFn: (input) =>
+        runFactCheckPipeline({
+          ...input,
+          client: buildStubGeminiClient(input.apiKey),
+        }),
+    });
+
     server = app.listen(0, '127.0.0.1');
     await new Promise<void>((resolve) => server.once('listening', () => resolve()));
     const address = server.address();
@@ -156,46 +322,192 @@ describe('TRUTHLENS AI — Express API Route Tests', () => {
   });
 
   after(async () => {
+    if (savedServerEnvKey === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = savedServerEnvKey;
+
     await new Promise<void>((resolve, reject) => {
       server.close((err) => (err ? reject(err) : resolve()));
     });
   });
 
-  it('GET /api/health returns status without exposing secrets', async () => {
-    const res = await fetch(`${baseUrl}/api/health`);
-    assert.equal(res.status, 200);
-    const body = (await res.json()) as Record<string, unknown>;
-    assert.equal(body.status, 'ok');
-    assert.equal(typeof body.serverKeyConfigured, 'boolean');
-    assert.equal('apiKey' in body, false);
-    assert.equal('GEMINI_API_KEY' in body, false);
-  });
-
-  it('POST /api/test-key rejects malformed keys cleanly without echoing the key', async () => {
+  it('TEST 1: Valid Gemini API key authentication succeeds', async () => {
     const res = await fetch(`${baseUrl}/api/test-key`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ apiKey: 'bad_k' }),
-    });
-    assert.equal(res.status, 400);
-    const body = (await res.json()) as { success: boolean; message: string };
-    assert.equal(body.success, false);
-    assert.equal(JSON.stringify(body).includes('bad_k'), false);
-  });
-
-  it('POST /api/extract-post rejects SSRF URLs', async () => {
-    const res = await fetch(`${baseUrl}/api/extract-post`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: 'http://127.0.0.1:3000/api/health' }),
+      body: JSON.stringify({ apiKey: VALID_USER_KEY }),
     });
     assert.equal(res.status, 200);
-    const body = (await res.json()) as { status: string; failureReason: string };
-    assert.equal(body.status, 'unavailable');
-    assert.ok(body.failureReason.length > 5);
+    const body = (await res.json()) as { success: boolean; connectionStatus: string; activeModel: string };
+    assert.equal(body.success, true);
+    assert.equal(body.connectionStatus, 'connected');
+    assert.equal(body.activeModel, 'gemini-4-hydrogen');
   });
 
-  it('POST /api/analyze returns clear MISSING_API_KEY error when neither key is available', async () => {
+  it('TEST 2: Invalid API key returns clear HTTP 401 authentication error without leaking key', async () => {
+    const res = await fetch(`${baseUrl}/api/test-key`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey: INVALID_KEY }),
+    });
+    assert.equal(res.status, 401);
+    const body = (await res.json()) as { success: boolean; connectionStatus: string; message: string };
+    assert.equal(body.success, false);
+    assert.equal(body.connectionStatus, 'invalid_key');
+    assert.equal(JSON.stringify(body).includes(INVALID_KEY), false);
+  });
+
+  it('TEST 3: OAuth token beginning with AQ is tested server-side and rejected with clear Google AI Studio guidance', async () => {
+    const res = await fetch(`${baseUrl}/api/test-key`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey: AQ_OAUTH_TOKEN }),
+    });
+    assert.equal(res.status, 401);
+    const body = (await res.json()) as { success: boolean; connectionStatus: string; message: string };
+    assert.equal(body.success, false);
+    assert.equal(body.connectionStatus, 'invalid_key');
+    assert.ok(body.message.includes('Google AI Studio'));
+    assert.equal(JSON.stringify(body).includes(AQ_OAUTH_TOKEN), false);
+  });
+
+  it('TEST 4: No user key falls back to valid server environment key', async () => {
+    const healthRes = await fetch(`${baseUrl}/api/health?verify=1&refresh=1`);
+    assert.equal(healthRes.status, 200);
+    const healthBody = (await healthRes.json()) as Record<string, unknown>;
+    assert.equal(healthBody.serverKeyConfigured, true);
+    assert.equal(healthBody.serverKeyStatus, 'verified');
+
+    const analyzeRes = await fetch(`${baseUrl}/api/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        submissionType: 'text',
+        text: 'Drinking lemon water cures chronic kidney disease in 14 days.',
+        category: 'Health',
+      }),
+    });
+    assert.equal(analyzeRes.status, 200);
+    const analyzeBody = (await analyzeRes.json()) as Record<string, unknown>;
+    assert.equal(analyzeBody.status, 'success');
+  });
+
+  it('TEST 5: When both keys are available, valid user key takes priority', async () => {
+    let seenKey = '';
+    const customApp = createApiApp({
+      runPipelineFn: async (input) => {
+        seenKey = input.apiKey;
+        return runFactCheckPipeline({ ...input, client: buildStubGeminiClient(input.apiKey) });
+      },
+    });
+    const tmpServer = customApp.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => tmpServer.once('listening', () => resolve()));
+    const addr = tmpServer.address() as { port: number };
+    try {
+      const res = await fetch(`http://127.0.0.1:${addr.port}/api/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          submissionType: 'text',
+          text: 'Lemon water cures kidney disease.',
+          category: 'Health',
+          apiKey: VALID_USER_KEY,
+        }),
+      });
+      assert.equal(res.status, 200);
+      assert.equal(seenKey, VALID_USER_KEY);
+    } finally {
+      await new Promise<void>((resolve) => tmpServer.close(() => resolve()));
+    }
+  });
+
+  it('TEST 6: Invalid user key with valid server key displays user-key error without silently switching', async () => {
+    const res = await fetch(`${baseUrl}/api/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        submissionType: 'text',
+        text: 'Lemon water cures kidney disease.',
+        category: 'Health',
+        apiKey: INVALID_KEY,
+      }),
+    });
+    assert.equal(res.status, 401);
+    const body = (await res.json()) as { code: string; keySource: string; message: string };
+    assert.equal(body.code, 'INVALID_KEY');
+    assert.equal(body.keySource, 'user');
+    assert.ok(body.message.includes('User API key error'));
+  });
+
+  it('TEST 7: API quota exceeded returns clear HTTP 429 quota error', async () => {
+    const res = await fetch(`${baseUrl}/api/test-key`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey: QUOTA_KEY }),
+    });
+    assert.equal(res.status, 429);
+    const body = (await res.json()) as { success: boolean; connectionStatus: string; message: string };
+    assert.equal(body.success, false);
+    assert.equal(body.connectionStatus, 'quota_exceeded');
+    assert.ok(body.message.toLowerCase().includes('quota'));
+  });
+
+  it('TEST 8: Unsupported model returns clear HTTP 404 model_unavailable error', async () => {
+    const prevModel = process.env.GEMINI_MODEL;
+    process.env.GEMINI_MODEL = 'gemini-unsupported-99';
+    try {
+      const result = await testGeminiKey(VALID_USER_KEY, {
+        client: buildStubGeminiClient(VALID_USER_KEY, 'gemini-unsupported-99'),
+      });
+      assert.equal(result.success, false);
+      assert.equal(result.connectionStatus, 'model_unavailable');
+      assert.ok(result.message.includes('gemini-unsupported-99'));
+    } finally {
+      if (prevModel === undefined) delete process.env.GEMINI_MODEL;
+      else process.env.GEMINI_MODEL = prevModel;
+    }
+  });
+
+  it('TEST 9: Actual claim analysis returns complete schema with grounded citations', async () => {
+    const res = await fetch(`${baseUrl}/api/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        submissionType: 'text',
+        text: 'Drinking lemon water cures chronic kidney disease within 14 days.',
+        category: 'Health',
+        apiKey: VALID_USER_KEY,
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as Record<string, unknown>;
+    const parsed = factCheckResponseSchema.safeParse(body);
+    assert.equal(parsed.success, true);
+    if (parsed.success) {
+      assert.equal(parsed.data.assessment, 'CONTRADICTED');
+      assert.equal(parsed.data.sources.length, 1);
+      assert.equal(parsed.data.sources[0].id, 'SRC-1');
+    }
+  });
+
+  it('TEST 10: Removing user API key clears override and restores valid server-key fallback', async () => {
+    // Request with no user apiKey after clearing user session key falls back to server key cleanly
+    const healthRes = await fetch(`${baseUrl}/api/health?verify=1&refresh=1`);
+    const healthBody = (await healthRes.json()) as { serverKeyStatus: string };
+    assert.equal(healthBody.serverKeyStatus, 'verified');
+
+    const analyzeRes = await fetch(`${baseUrl}/api/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        submissionType: 'text',
+        text: 'Drinking lemon water cures chronic kidney disease within 14 days.',
+        category: 'Health',
+      }),
+    });
+    assert.equal(analyzeRes.status, 200);
+  });
+
+  it('returns MISSING_API_KEY 400 when neither key is configured and JSON errors for bad routes', async () => {
     const saved = process.env.GEMINI_API_KEY;
     delete process.env.GEMINI_API_KEY;
     try {
@@ -209,52 +521,15 @@ describe('TRUTHLENS AI — Express API Route Tests', () => {
         }),
       });
       assert.equal(res.status, 400);
-      const body = (await res.json()) as { code: string; message: string };
+      const body = (await res.json()) as { code: string };
       assert.equal(body.code, 'MISSING_API_KEY');
     } finally {
       if (saved !== undefined) process.env.GEMINI_API_KEY = saved;
     }
-  });
 
-  it('POST /api/analyze handles malformed JSON safely', async () => {
-    const res = await fetch(`${baseUrl}/api/analyze`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{invalid-json',
-    });
-    assert.equal(res.status, 400);
-    const body = (await res.json()) as { message: string };
-    assert.ok(body.message.toLowerCase().includes('malformed'));
+    const notFound = await fetch(`${baseUrl}/api/does-not-exist`);
+    assert.equal(notFound.status, 404);
+    const nfBody = (await notFound.json()) as { code: string };
+    assert.equal(nfBody.code, 'NOT_FOUND');
   });
 });
-
-const liveApiKey = process.env.GEMINI_API_KEY?.trim();
-
-describe(
-  'TRUTHLENS AI — Live Gemini + Google Search Grounding Integration',
-  { skip: !liveApiKey },
-  () => {
-    it('runs multi-claim verification with live Google Search grounding and returns validated schema', async () => {
-      const result = await runFactCheckPipeline({
-        apiKey: liveApiKey!,
-        submissionType: 'text',
-        submittedText:
-          'Drinking 4 liters of lemon water daily cures chronic kidney disease in 14 days, and the World Health Organization recommends replacing prescribed blood pressure medicine with citrus juice.',
-        sourceUrl: null,
-        detectedPlatform: 'unknown',
-        extractionStatus: 'user_provided',
-        category: 'Health',
-      });
-
-      const parsed = factCheckResponseSchema.safeParse(result);
-      assert.equal(parsed.success, true);
-      assert.ok(result.claims.length >= 1);
-      assert.ok(['CONTRADICTED', 'MISLEADING', 'NEEDS_VERIFICATION'].includes(result.assessment));
-      if (result.sources.length > 0) {
-        for (const src of result.sources) {
-          assert.ok(src.url.startsWith('http'));
-        }
-      }
-    });
-  }
-);

@@ -9,9 +9,16 @@
 @layer base {
   html {
     font-family: var(--font-sans);
-    background-color: #080b18;
-    color: #f8fafc;
+    background-color: #f8fafc;
+    color: #0f172a;
     scroll-behavior: smooth;
+    color-scheme: light;
+  }
+
+  body {
+    background-color: #f8fafc;
+    color: #0f172a;
+    overflow-x: hidden;
   }
 
   h1,
@@ -21,8 +28,270 @@
     font-family: var(--font-display);
   }
 
+  ::selection {
+    background-color: rgba(37, 99, 235, 0.16);
+    color: #0f172a;
+  }
+
   .tabular-nums {
     font-variant-numeric: tabular-nums;
+  }
+}
+
+@keyframes lab-spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes lab-spin-reverse {
+  from {
+    transform: rotate(360deg);
+  }
+  to {
+    transform: rotate(0deg);
+  }
+}
+
+@keyframes lab-scan-sweep {
+  0% {
+    transform: translateY(-10%);
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.85;
+  }
+  85% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: translateY(110%);
+    opacity: 0;
+  }
+}
+
+@keyframes lab-float {
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes lab-circuit-dash {
+  from {
+    stroke-dashoffset: 240;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes lab-cube-spin {
+  0% {
+    transform: rotateX(-20deg) rotateY(0deg);
+  }
+  50% {
+    transform: rotateX(18deg) rotateY(180deg);
+  }
+  100% {
+    transform: rotateX(-20deg) rotateY(360deg);
+  }
+}
+
+@keyframes lab-orbit-3d {
+  from {
+    transform: rotateX(68deg) rotateZ(0deg);
+  }
+  to {
+    transform: rotateX(68deg) rotateZ(360deg);
+  }
+}
+
+@keyframes lab-servo-sway {
+  0%,
+  100% {
+    transform: rotate(-7deg);
+  }
+  50% {
+    transform: rotate(7deg);
+  }
+}
+
+@keyframes lab-globe-meridian {
+  0% {
+    transform: scaleX(0.95);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scaleX(0.22);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scaleX(0.95);
+    opacity: 0.55;
+  }
+}
+
+@layer components {
+  .bg-lab-grid {
+    background-image:
+      linear-gradient(to right, rgba(37, 99, 235, 0.055) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(37, 99, 235, 0.055) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse 90% 70% at 50% 18%, #000 38%, transparent 100%);
+    -webkit-mask-image: radial-gradient(ellipse 90% 70% at 50% 18%, #000 38%, transparent 100%);
+  }
+
+  .lab-panel {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(248, 251, 255, 0.92) 100%);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(203, 213, 225, 0.85);
+    box-shadow:
+      0 18px 42px -24px rgba(15, 23, 42, 0.14),
+      0 4px 14px -6px rgba(37, 99, 235, 0.06),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.95);
+  }
+
+  .lab-panel-interactive {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 251, 255, 0.94) 100%);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(203, 213, 225, 0.88);
+    box-shadow:
+      0 14px 34px -20px rgba(15, 23, 42, 0.12),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.95);
+    transition:
+      border-color 200ms cubic-bezier(0.16, 1, 0.3, 1),
+      box-shadow 200ms cubic-bezier(0.16, 1, 0.3, 1),
+      transform 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .lab-panel-interactive:hover {
+    border-color: rgba(59, 130, 246, 0.45);
+    box-shadow:
+      0 22px 44px -20px rgba(37, 99, 235, 0.18),
+      0 6px 18px -8px rgba(14, 165, 233, 0.12),
+      inset 0 1px 0 0 rgba(255, 255, 255, 1);
+    transform: translateY(-2px);
+  }
+
+  .lab-input {
+    background-color: #f8fafc;
+    border: 1px solid #cbd5e1;
+    color: #0f172a;
+    box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.04);
+    transition:
+      border-color 180ms ease,
+      box-shadow 180ms ease,
+      background-color 180ms ease;
+  }
+
+  .lab-input:focus {
+    outline: none;
+    background-color: #ffffff;
+    border-color: #2563eb;
+    box-shadow:
+      inset 0 1px 2px rgba(15, 23, 42, 0.03),
+      0 0 0 3px rgba(37, 99, 235, 0.14);
+  }
+
+  .lab-btn-primary {
+    background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 52%, #0284c7 100%);
+    color: #ffffff;
+    box-shadow:
+      0 10px 24px -8px rgba(37, 99, 235, 0.48),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.28);
+    transition:
+      filter 180ms ease,
+      box-shadow 180ms ease,
+      transform 150ms ease,
+      opacity 180ms ease;
+  }
+
+  .lab-btn-primary:hover:not(:disabled) {
+    filter: brightness(1.07);
+    box-shadow:
+      0 14px 28px -8px rgba(2, 132, 199, 0.45),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.34);
+  }
+
+  .lab-btn-primary:active:not(:disabled) {
+    transform: translateY(0.5px);
+  }
+
+  .lab-btn-secondary {
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    color: #0f172a;
+    box-shadow: 0 2px 8px -4px rgba(15, 23, 42, 0.08);
+    transition:
+      border-color 180ms ease,
+      background-color 180ms ease,
+      box-shadow 180ms ease,
+      color 180ms ease;
+  }
+
+  .lab-btn-secondary:hover:not(:disabled) {
+    background: #f8fbff;
+    border-color: rgba(37, 99, 235, 0.42);
+    color: #1d4ed8;
+    box-shadow: 0 8px 20px -10px rgba(37, 99, 235, 0.22);
+  }
+
+  .lab-icon-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.75rem;
+    border: 1px solid rgba(59, 130, 246, 0.22);
+    background: linear-gradient(135deg, rgba(239, 246, 255, 0.95) 0%, rgba(224, 242, 254, 0.85) 100%);
+    box-shadow:
+      0 4px 10px -6px rgba(37, 99, 235, 0.2),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.9);
+  }
+
+  .animate-lab-spin-slow {
+    animation: lab-spin-slow 26s linear infinite;
+  }
+
+  .animate-lab-spin-reverse {
+    animation: lab-spin-reverse 18s linear infinite;
+  }
+
+  .animate-lab-scan {
+    animation: lab-scan-sweep 4.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+
+  .animate-lab-float {
+    animation: lab-float 5.2s ease-in-out infinite;
+  }
+
+  .animate-lab-circuit {
+    stroke-dasharray: 12 12;
+    animation: lab-circuit-dash 9s linear infinite;
+  }
+
+  .animate-lab-cube {
+    animation: lab-cube-spin 11s linear infinite;
+  }
+
+  .animate-lab-orbit-3d {
+    animation: lab-orbit-3d 10s linear infinite;
+  }
+
+  .animate-lab-servo {
+    animation: lab-servo-sway 4.8s ease-in-out infinite;
+  }
+
+  .animate-lab-meridian {
+    animation: lab-globe-meridian 6.5s ease-in-out infinite;
   }
 }
 

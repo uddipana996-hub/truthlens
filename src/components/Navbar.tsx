@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { KeyRound, Menu, X } from 'lucide-react';
-import { useApiKey } from '../context/ApiKeyContext';
+import { ArrowRight, Menu, X } from 'lucide-react';
 import { BrandLogo } from './BrandLogo';
 
 export type AppRoute = 'home' | 'analyze' | 'how-it-works' | 'about';
@@ -18,17 +17,7 @@ const NAV_ITEMS: Array<{ id: AppRoute; label: string }> = [
 ];
 
 export function Navbar({ activeRoute, onNavigate }: NavbarProps) {
-  const { connectionState, openModal } = useApiKey();
   const [mobileOpen, setMobileOpen] = useState(false);
-
-  const keyLabel =
-    connectionState === 'user-verified'
-      ? 'Key Ready'
-      : connectionState === 'user-untested'
-        ? 'Session Key'
-        : connectionState === 'server-configured'
-          ? 'API Key Settings'
-          : 'API Key Settings';
 
   const handleSelect = (route: AppRoute) => {
     onNavigate(route);
@@ -36,22 +25,26 @@ export function Navbar({ activeRoute, onNavigate }: NavbarProps) {
   };
 
   return (
-    <header className="sticky top-0 z-40 border-b border-white/10 bg-[#080B18]/90 backdrop-blur-md">
+    <header className="sticky top-0 z-40 border-b border-slate-200/85 bg-white/85 backdrop-blur-xl">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-blue-500/25 to-transparent"
+      />
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-8 px-4 py-3.5 sm:px-6">
         {/* Zone 1: Brand Wordmark */}
         <button
           type="button"
           onClick={() => handleSelect('home')}
-          className="flex items-center gap-2.5 text-left whitespace-nowrap shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#8B5CF6] rounded-lg"
+          className="group flex items-center gap-3 text-left whitespace-nowrap shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] rounded-lg"
         >
-          <BrandLogo className="w-8 h-8" />
-          <span className="font-display text-lg font-bold tracking-tight text-[#F8FAFC] whitespace-nowrap">
-            TRUTHLENS AI
+          <BrandLogo className="w-8 h-8 transition-transform duration-200 group-hover:scale-[1.03]" />
+          <span className="font-display text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap">
+            Truth<span className="text-[#2563EB]">Lens</span>
           </span>
         </button>
 
         {/* Zone 2: 4 Single-line Nav Links */}
-        <nav aria-label="Primary navigation" className="hidden md:flex items-center gap-7">
+        <nav aria-label="Primary navigation" className="hidden md:flex items-center gap-6">
           {NAV_ITEMS.map((item) => {
             const isActive = activeRoute === item.id;
             return (
@@ -59,15 +52,15 @@ export function Navbar({ activeRoute, onNavigate }: NavbarProps) {
                 key={item.id}
                 type="button"
                 onClick={() => handleSelect(item.id)}
-                className={`relative py-1 text-sm font-medium transition-colors whitespace-nowrap shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#8B5CF6] rounded ${
+                className={`relative py-1.5 text-sm font-medium transition-colors whitespace-nowrap shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] rounded ${
                   isActive
-                    ? 'text-[#F8FAFC]'
-                    : 'text-[#94A3B8] hover:text-[#F8FAFC]'
+                    ? 'text-[#1D4ED8]'
+                    : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 {item.label}
                 {isActive && (
-                  <span className="absolute inset-x-0 -bottom-1 h-0.5 rounded-full bg-gradient-to-r from-[#8B5CF6] to-[#22D3EE]" />
+                  <span className="absolute inset-x-0 -bottom-0.5 h-[2px] rounded-full bg-gradient-to-r from-[#2563EB] to-[#06B6D4]" />
                 )}
               </button>
             );
@@ -78,11 +71,11 @@ export function Navbar({ activeRoute, onNavigate }: NavbarProps) {
         <div className="flex items-center gap-3 shrink-0">
           <button
             type="button"
-            onClick={openModal}
-            className="inline-flex items-center gap-2 rounded-lg border border-[#8B5CF6]/40 bg-[#10162A] px-3.5 py-2 text-xs font-semibold text-[#F8FAFC] transition-colors hover:border-[#22D3EE]/60 hover:bg-[#161F3B] whitespace-nowrap shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#22D3EE]"
+            onClick={() => handleSelect('analyze')}
+            className="lab-btn-primary inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-semibold whitespace-nowrap shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
           >
-            <KeyRound className="h-3.5 w-3.5 text-[#22D3EE]" aria-hidden="true" />
-            <span>{keyLabel}</span>
+            <span>Analyze Claim</span>
+            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
 
           <button
@@ -90,7 +83,7 @@ export function Navbar({ activeRoute, onNavigate }: NavbarProps) {
             onClick={() => setMobileOpen((prev) => !prev)}
             aria-expanded={mobileOpen}
             aria-label="Toggle navigation menu"
-            className="inline-flex md:hidden items-center justify-center rounded-lg border border-white/10 bg-[#10162A] p-2 text-[#94A3B8] hover:text-[#F8FAFC] min-w-[40px] min-h-[40px]"
+            className="lab-btn-secondary inline-flex md:hidden items-center justify-center rounded-xl p-2 text-slate-600 hover:text-slate-900 min-w-[40px] min-h-[40px]"
           >
             {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
@@ -99,7 +92,7 @@ export function Navbar({ activeRoute, onNavigate }: NavbarProps) {
 
       {/* Mobile Navigation Drawer */}
       {mobileOpen && (
-        <div className="md:hidden border-t border-white/10 bg-[#080B18] px-4 py-3">
+        <div className="md:hidden border-t border-slate-200 bg-white/95 backdrop-blur-xl px-4 py-3">
           <nav className="flex flex-col gap-1" aria-label="Mobile navigation">
             {NAV_ITEMS.map((item) => {
               const isActive = activeRoute === item.id;
@@ -108,14 +101,14 @@ export function Navbar({ activeRoute, onNavigate }: NavbarProps) {
                   key={item.id}
                   type="button"
                   onClick={() => handleSelect(item.id)}
-                  className={`flex items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors min-h-[44px] ${
+                  className={`flex items-center justify-between rounded-xl px-3.5 py-2.5 text-left text-sm font-medium transition-colors min-h-[44px] ${
                     isActive
-                      ? 'bg-[#10162A] text-[#F8FAFC]'
-                      : 'text-[#94A3B8] hover:bg-[#10162A]/60 hover:text-[#F8FAFC]'
+                      ? 'border border-blue-200 bg-blue-50 text-[#1D4ED8]'
+                      : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
                   }`}
                 >
                   <span>{item.label}</span>
-                  {isActive && <span className="text-xs text-[#22D3EE]">Active</span>}
+                  {isActive && <span className="text-xs font-medium text-[#2563EB]">Active</span>}
                 </button>
               );
             })}
