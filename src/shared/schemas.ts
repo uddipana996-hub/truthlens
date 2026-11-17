@@ -36,8 +36,8 @@ export const testKeyRequestSchema = z.object({
   apiKey: z
     .string()
     .trim()
-    .min(10, 'API key appears too short.')
-    .max(256, 'API key exceeds maximum allowed length.'),
+    .min(10, 'Gemini API key appears too short.')
+    .max(512, 'API key exceeds maximum allowed length.'),
 });
 
 export const extractPostRequestSchema = z.object({
@@ -77,7 +77,7 @@ export const analyzeRequestSchema = z
       .string()
       .trim()
       .min(10, 'Provided Gemini API key appears invalid.')
-      .max(256, 'Provided Gemini API key exceeds maximum length.')
+      .max(512, 'Provided API key exceeds maximum length.')
       .optional(),
   })
   .superRefine((data, ctx) => {
@@ -126,22 +126,24 @@ export const stage5SynthesisSchema = z.object({
   }),
   claimSummary: z.string(),
   overallExplanation: z.string(),
-  keyFindings: z.array(z.string()),
-  claims: z.array(
-    z.object({
-      text: z.string(),
-      assessment: z.enum(ASSESSMENT_OUTCOMES),
-      explanation: z.string(),
-      supportingSourceIds: z.array(z.string()),
-      contradictingSourceIds: z.array(z.string()),
-      missingContext: z.array(z.string()),
-    })
-  ),
-  supportingEvidence: z.array(z.string()),
-  contradictingEvidence: z.array(z.string()),
-  missingContext: z.array(z.string()),
-  questionsToInvestigate: z.array(z.string()),
-  recommendedActions: z.array(z.string()),
+  keyFindings: z.array(z.string()).default([]),
+  claims: z
+    .array(
+      z.object({
+        text: z.string(),
+        assessment: z.enum(ASSESSMENT_OUTCOMES),
+        explanation: z.string(),
+        supportingSourceIds: z.array(z.string()).default([]),
+        contradictingSourceIds: z.array(z.string()).default([]),
+        missingContext: z.array(z.string()).default([]),
+      })
+    )
+    .default([]),
+  supportingEvidence: z.array(z.string()).default([]),
+  contradictingEvidence: z.array(z.string()).default([]),
+  missingContext: z.array(z.string()).default([]),
+  questionsToInvestigate: z.array(z.string()).default([]),
+  recommendedActions: z.array(z.string()).default([]),
   sourceAnnotations: z
     .array(
       z.object({
@@ -153,7 +155,7 @@ export const stage5SynthesisSchema = z.object({
       })
     )
     .default([]),
-  limitations: z.array(z.string()),
+  limitations: z.array(z.string()).default([]),
 });
 
 export const factCheckResponseSchema = z.object({

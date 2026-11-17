@@ -83,12 +83,12 @@ export function AboutPage({ onNavigate }: AboutPageProps) {
             <Shield className="h-4 w-4 text-[#2563EB]" aria-hidden="true" />
           </div>
           <h2 className="font-display text-lg font-bold text-slate-900">
-            Privacy &amp; Local-First Design
+            Privacy &amp; Ephemeral Keys
           </h2>
           <p className="text-sm leading-relaxed text-slate-600">
-            TruthLens does not require accounts, payments, API keys, or claim history databases.
-            Interactive demo investigations run locally in your browser without storing personal
-            submissions on external servers.
+            TruthLens does not require accounts, payments, or claim history databases. User-supplied
+            session API keys stay in volatile tab memory for the active session and are discarded on
+            the server immediately after each request.
           </p>
         </div>
       </div>

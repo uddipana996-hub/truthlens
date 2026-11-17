@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import type { KeyVerificationStatus, TestKeyResponse } from '../../src/shared/types.js';
 import { sanitizeErrorMessage } from '../middleware/security.js';
@@ -18,12 +19,67 @@ const FALLBACK_FLASH_CANDIDATES = [
   'gemini-3.1-flash-lite',
   'gemini-3-flash-preview',
   'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
 ];
+
+const EXCLUDED_MODEL_SUBSTRINGS = [
+  'gemini-1.',
+  'gemini-2.0-',
+  'tts',
+  'image',
+  'live',
+  'audio',
+  'robotics',
+  'computer-use',
+  'embedding',
+  'aqa',
+  'imagen',
+  'veo',
+  'lyria',
+];
+
+// Short-lived per-key-hash working model cache (never stores raw API key)
+const workingModelCache = new Map<string, { model: string; cachedAt: number }>();
+const MODEL_CACHE_TTL_MS = 5 * 60_000;
+
+function hashKeyForCache(apiKey: string): string {
+  return crypto.createHash('sha256').update(apiKey.trim()).digest('hex');
+}
+
+export function getCachedWorkingModelForKey(apiKey: string): string | null {
+  const hash = hashKeyForCache(apiKey);
+  const entry = workingModelCache.get(hash);
+  if (!entry) return null;
+  if (Date.now() - entry.cachedAt > MODEL_CACHE_TTL_MS) {
+    workingModelCache.delete(hash);
+    return null;
+  }
+  return entry.model;
+}
+
+export function recordWorkingModelForKey(apiKey: string, model: string): void {
+  if (!apiKey.trim() || !model.trim()) return;
+  const hash = hashKeyForCache(apiKey);
+  workingModelCache.set(hash, { model: model.trim(), cachedAt: Date.now() });
+}
+
+export function isObviousOAuthToken(rawKey?: string): boolean {
+  const trimmed = rawKey?.trim() ?? '';
+  if (!trimmed) return false;
+  return (
+    trimmed.startsWith('ya29.') ||
+    trimmed.startsWith('1//') ||
+    /^bearer\s+/i.test(trimmed) ||
+    trimmed.startsWith('ghp_') ||
+    trimmed.startsWith('sk-')
+  );
+}
 
 export function isNonPlaceholderEnvKey(rawKey?: string): boolean {
   const trimmed = rawKey?.trim() ?? '';
-  if (trimmed.length < 10) return false;
+  if (trimmed.length < 16) return false;
   if (PLACEHOLDER_ENV_VALUES.has(trimmed)) return false;
+  if (isObviousOAuthToken(trimmed)) return false;
   return true;
 }
 
@@ -38,8 +94,8 @@ export function resolveGeminiModel(): string {
 
 /**
  * Resolves the active Gemini API key with strict priority:
- * 1. User-provided key (if any non-empty string is supplied; never silently falls back to server key)
- * 2. Server environment GEMINI_API_KEY (if configured and non-placeholder)
+ * 1. User-provided key (kept even if malformed/OAuth so explicit user error is returned without silently falling back)
+ * 2. Server environment GEMINI_API_KEY (supports both standard AIza... keys and valid AQ. keys)
  */
 export function resolveActiveApiKey(userProvidedKey?: string): {
   apiKey: string;
@@ -89,18 +145,6 @@ export class GeminiPipelineError extends Error {
   }
 }
 
-export function looksLikeNonApiKeyCredential(candidate?: string): boolean {
-  const trimmed = candidate?.trim() ?? '';
-  if (!trimmed) return false;
-  if (/^bearer\s+/i.test(trimmed)) return true;
-  return (
-    trimmed.startsWith('AQ.') ||
-    trimmed.startsWith('ya29.') ||
-    trimmed.startsWith('1//') ||
-    trimmed.startsWith('eyJ')
-  );
-}
-
 export function classifyGeminiError(
   err: unknown,
   options?: { keyCandidate?: string; modelName?: string }
@@ -113,27 +157,34 @@ export function classifyGeminiError(
   const raw = sanitizeErrorMessage(err);
   const lower = raw.toLowerCase();
   const modelLabel = options?.modelName || resolveGeminiModel();
-  const nonApiKeyShape = looksLikeNonApiKeyCredential(options?.keyCandidate);
-  const isAuthOrKeyRejection =
-    lower.includes('access_token_type_unsupported') ||
-    lower.includes('unauthenticated') ||
-    lower.includes('api_key_invalid') ||
-    lower.includes('api key not valid') ||
-    lower.includes('permission_denied') ||
-    lower.includes('400') ||
-    lower.includes('401') ||
-    lower.includes('403');
+  const candidate = options?.keyCandidate?.trim() ?? '';
 
-  if (
-    lower.includes('access_token_type_unsupported') ||
-    (isAuthOrKeyRejection && nonApiKeyShape)
-  ) {
+  if (isObviousOAuthToken(candidate)) {
     return {
       code: 'invalid_key',
       httpStatus: 401,
       isHardQuota: false,
       message:
-        'OAuth access tokens, Google Cloud tokens, Bearer headers, and AQ... credentials are not accepted as Gemini API keys. Generate a standard Gemini API key at Google AI Studio (https://aistudio.google.com/apikey).',
+        'OAuth access tokens (ya29..., Bearer tokens, or 1//...) are not Gemini API keys. Create a standard Gemini API key starting with AIza... at Google AI Studio (https://aistudio.google.com/apikey).',
+    };
+  }
+
+  if (lower.includes('access_token_type_unsupported')) {
+    if (candidate.startsWith('AQ.')) {
+      return {
+        code: 'invalid_key',
+        httpStatus: 401,
+        isHardQuota: false,
+        message:
+          'Google returned 401 ACCESS_TOKEN_TYPE_UNSUPPORTED for this AQ. credential. In Google Cloud Console → Credentials → API restrictions, change "Gemini API" to "Generative Language API" (generativelanguage.googleapis.com) or use a standard AIza... key from Google AI Studio (https://aistudio.google.com/apikey).',
+      };
+    }
+    return {
+      code: 'invalid_key',
+      httpStatus: 401,
+      isHardQuota: false,
+      message:
+        'This credential is not accepted as a Gemini API key (ACCESS_TOKEN_TYPE_UNSUPPORTED). Create a standard Gemini API key starting with AIza... at Google AI Studio (https://aistudio.google.com/apikey).',
     };
   }
 
@@ -143,7 +194,7 @@ export function classifyGeminiError(
       httpStatus: 403,
       isHardQuota: false,
       message:
-        'This Gemini API key has HTTP Referrer (website) restrictions that block server-side requests. In Google Cloud / AI Studio, set Key Application Restrictions to "None" for server use.',
+        'This API key has HTTP Referrer (website) restrictions blocking server-side requests. In Google Cloud Console → Credentials, set Application restrictions to "None".',
     };
   }
 
@@ -151,14 +202,14 @@ export function classifyGeminiError(
     lower.includes('api_key_service_blocked') ||
     lower.includes('has not been used in project') ||
     lower.includes('service_disabled') ||
-    lower.includes('generativelanguage.googleapis.com') && lower.includes('disabled')
+    (lower.includes('generativelanguage.googleapis.com') && lower.includes('disabled'))
   ) {
     return {
       code: 'auth_failed',
       httpStatus: 403,
       isHardQuota: false,
       message:
-        'The Generative Language API is not enabled for this Google Cloud project. Create a key directly at Google AI Studio (https://aistudio.google.com/apikey) or enable generativelanguage.googleapis.com.',
+        'Generative Language API (generativelanguage.googleapis.com) is not enabled or permitted for this API key. Enable it in Google Cloud Console Credentials.',
     };
   }
 
@@ -168,7 +219,7 @@ export function classifyGeminiError(
       httpStatus: 401,
       isHardQuota: false,
       message:
-        'This Gemini API key was disabled by Google because it was reported as leaked. Generate a fresh key at Google AI Studio (https://aistudio.google.com/apikey).',
+        'This API key was disabled by Google because it was reported as leaked. Generate a fresh key at Google AI Studio (https://aistudio.google.com/apikey).',
     };
   }
 
@@ -178,7 +229,7 @@ export function classifyGeminiError(
       httpStatus: 403,
       isHardQuota: false,
       message:
-        'Gemini API access from the server region is not supported for this key or billing tier.',
+        'Gemini API access from this server region is not supported for this API key or billing tier.',
     };
   }
 
@@ -188,7 +239,7 @@ export function classifyGeminiError(
       httpStatus: 401,
       isHardQuota: false,
       message:
-        'Invalid or revoked Gemini API key. Generate or verify a standard Gemini API key at Google AI Studio (https://aistudio.google.com/apikey).',
+        'Invalid, expired, or revoked Gemini API key. Generate a valid key (AIza... or Generative-Language-enabled AQ.) at Google AI Studio (https://aistudio.google.com/apikey).',
     };
   }
 
@@ -202,7 +253,7 @@ export function classifyGeminiError(
       code: 'auth_failed',
       httpStatus: lower.includes('403') || lower.includes('permission_denied') ? 403 : 401,
       isHardQuota: false,
-      message: `Authentication failed for this API key: ${raw}`,
+      message: `Authentication failed for this Gemini API key: ${raw}`,
     };
   }
 
@@ -215,7 +266,7 @@ export function classifyGeminiError(
       httpStatus: 429,
       isHardQuota,
       message: isHardQuota
-        ? 'API quota exceeded (429 RESOURCE_EXHAUSTED). Check your Google AI Studio plan/billing or switch API keys.'
+        ? 'API quota exceeded (429 RESOURCE_EXHAUSTED). Check your Google AI Studio / Cloud plan and billing, or switch API keys.'
         : 'API rate limit reached (429). Please wait a moment and try again.',
     };
   }
@@ -230,7 +281,7 @@ export function classifyGeminiError(
       code: 'model_unavailable',
       httpStatus: 404,
       isHardQuota: false,
-      message: `Model "${modelLabel}" is unavailable or unsupported for this API key (HTTP 404). Update GEMINI_MODEL or check enabled models in Google AI Studio.`,
+      message: `Model "${modelLabel}" is unavailable or unsupported for this API key (HTTP 404). Update GEMINI_MODEL or clear it to allow automatic model selection.`,
     };
   }
 
@@ -310,7 +361,6 @@ export async function withRetry<T>(
     } catch (err) {
       lastError = err;
       const classified = classifyGeminiError(err);
-      // Retry transient 503 high-demand or non-billing 429 rate-limits, not auth, 404, timeouts, or hard quotas
       const isRetryable =
         classified.code === 'service_unavailable' ||
         (classified.code === 'quota_exceeded' && !classified.isHardQuota);
@@ -334,10 +384,6 @@ export function buildThinkingConfigForModel(
   return undefined;
 }
 
-/**
- * Discovers an available generateContent-capable Flash model via Google's models.list() endpoint
- * when no explicit GEMINI_MODEL override is set and the default model returned 404.
- */
 export async function discoverSupportedModel(ai: GoogleGenAI): Promise<string | null> {
   try {
     const pager = await withTimeout(
@@ -359,7 +405,11 @@ export async function discoverSupportedModel(ai: GoogleGenAI): Promise<string | 
       }
     }
     for (const name of availableNames) {
-      if (name.includes('flash') && !name.includes('tts') && !name.includes('image') && !name.includes('live')) {
+      const lower = name.toLowerCase();
+      if (
+        lower.includes('flash') &&
+        !EXCLUDED_MODEL_SUBSTRINGS.some((sub) => lower.includes(sub))
+      ) {
         return name;
       }
     }
@@ -404,16 +454,29 @@ export async function testGeminiKey(
   options?: { client?: GoogleGenAI; modelOverride?: string }
 ): Promise<TestKeyResponse> {
   const trimmed = apiKey.trim();
-  if (!trimmed || trimmed.length < 10) {
+  if (!trimmed || trimmed.length < 16) {
     return {
       success: false,
       connectionStatus: 'invalid_key',
-      message: 'API key appears too short. Enter a valid Gemini API key from Google AI Studio.',
+      message:
+        'API key appears too short. Create a valid Gemini API key at Google AI Studio (https://aistudio.google.com/apikey).',
     };
   }
 
-  const configuredModel = options?.modelOverride?.trim() || resolveGeminiModel();
+  if (isObviousOAuthToken(trimmed)) {
+    return {
+      success: false,
+      connectionStatus: 'invalid_key',
+      message:
+        'OAuth access tokens (ya29..., Bearer tokens, or 1//...) are not Gemini API keys. Create a standard Gemini API key starting with AIza... at Google AI Studio (https://aistudio.google.com/apikey).',
+    };
+  }
+
   const strictModelMode = Boolean(options?.modelOverride?.trim()) || isExplicitModelConfigured();
+  const configuredModel =
+    options?.modelOverride?.trim() ||
+    (!strictModelMode ? getCachedWorkingModelForKey(trimmed) : null) ||
+    resolveGeminiModel();
   const ai = options?.client ?? createGeminiClient(trimmed);
 
   try {
@@ -425,10 +488,13 @@ export async function testGeminiKey(
         ...(thinkingCfg ? { config: thinkingCfg } : {}),
       }),
       15_000,
-      'Gemini key verification'
+      'Gemini API key verification'
     );
 
     if (response.text !== undefined) {
+      if (!options?.client) {
+        recordWorkingModelForKey(trimmed, configuredModel);
+      }
       return {
         success: true,
         connectionStatus: 'connected',
@@ -448,7 +514,6 @@ export async function testGeminiKey(
       modelName: configuredModel,
     });
 
-    // If default model returned 404 and no explicit GEMINI_MODEL was forced, verify available models via models.list()
     if (classified.code === 'model_unavailable' && !strictModelMode) {
       const discovered = await discoverSupportedModel(ai);
       if (discovered && discovered !== configuredModel) {
@@ -464,6 +529,9 @@ export async function testGeminiKey(
             'Gemini fallback model verification'
           );
           if (fallbackResp.text !== undefined) {
+            if (!options?.client) {
+              recordWorkingModelForKey(trimmed, discovered);
+            }
             return {
               success: true,
               connectionStatus: 'connected',

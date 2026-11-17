@@ -140,7 +140,8 @@ describe('TruthLens — Security, Ingestion & Citation Unit Tests', () => {
     if (prevModel === undefined) delete process.env.GEMINI_MODEL;
     else process.env.GEMINI_MODEL = prevModel;
 
-    assert.equal(classifyGeminiError(new Error('API_KEY_INVALID')).httpStatus, 401);
+    assert.equal(classifyGeminiError(new Error('API_KEY_INVALID'), { keyCandidate: 'AIzaTestKey_1234567890' }).httpStatus, 401);
+
     const ya29On400 = classifyGeminiError(new Error('400 INVALID_ARGUMENT: API_KEY_INVALID'), {
       keyCandidate: 'ya29.a0ExampleOAuthToken123456',
     });
@@ -155,10 +156,30 @@ describe('TruthLens — Security, Ingestion & Citation Unit Tests', () => {
     assert.equal(bearerWrapped.code, 'invalid_key');
     assert.match(bearerWrapped.message, /OAuth access tokens/i);
 
-    assert.equal(classifyGeminiError(new Error('PERMISSION_DENIED 403')).httpStatus, 403);
-    assert.equal(classifyGeminiError(new Error('404 NOT_FOUND')).httpStatus, 404);
-    assert.equal(classifyGeminiError(new Error('RESOURCE_EXHAUSTED 429')).httpStatus, 429);
-    assert.equal(classifyGeminiError(new Error('timed out after 20000ms')).httpStatus, 504);
+    const aqUnsupportedType = classifyGeminiError(
+      new Error('401 UNAUTHENTICATED: API key not valid. ACCESS_TOKEN_TYPE_UNSUPPORTED'),
+      { keyCandidate: 'AQ.Ab8RN6ExampleKey_1234567890' }
+    );
+    assert.equal(aqUnsupportedType.code, 'invalid_key');
+    assert.equal(aqUnsupportedType.httpStatus, 401);
+    assert.match(aqUnsupportedType.message, /Generative Language API/i);
+
+    assert.equal(
+      classifyGeminiError(new Error('PERMISSION_DENIED 403'), { keyCandidate: 'AIzaTestKey_1234567890' }).httpStatus,
+      403
+    );
+    assert.equal(
+      classifyGeminiError(new Error('404 NOT_FOUND'), { keyCandidate: 'AIzaTestKey_1234567890' }).httpStatus,
+      404
+    );
+    assert.equal(
+      classifyGeminiError(new Error('RESOURCE_EXHAUSTED 429'), { keyCandidate: 'AIzaTestKey_1234567890' }).httpStatus,
+      429
+    );
+    assert.equal(
+      classifyGeminiError(new Error('timed out after 20000ms'), { keyCandidate: 'AIzaTestKey_1234567890' }).httpStatus,
+      504
+    );
 
     const originalKey = process.env.GEMINI_API_KEY;
     process.env.GEMINI_API_KEY = 'AIzaServerEnvironmentPlaceholder1234567';
@@ -169,6 +190,15 @@ describe('TruthLens — Security, Ingestion & Citation Unit Tests', () => {
 
       const fallsBackToServer = resolveActiveApiKey(undefined);
       assert.equal(fallsBackToServer?.source, 'server');
+      assert.equal(fallsBackToServer?.apiKey, 'AIzaServerEnvironmentPlaceholder1234567');
+
+      // AQ. server key is also accepted when configured
+      process.env.GEMINI_API_KEY = 'AQ.Ab8RN6ServerAqKey1234567890';
+      assert.equal(resolveActiveApiKey(undefined)?.source, 'server');
+
+      // OAuth access token on server is rejected cleanly
+      process.env.GEMINI_API_KEY = 'ya29.a0InvalidServerOAuth123456';
+      assert.equal(resolveActiveApiKey(undefined), null);
 
       process.env.GEMINI_API_KEY = 'MY_GEMINI_API_KEY';
       assert.equal(resolveActiveApiKey(undefined), null);
@@ -189,24 +219,26 @@ describe('TruthLens — Security, Ingestion & Citation Unit Tests', () => {
   });
 });
 
-describe('TruthLens — 10 Gemini API Integration & Route Scenarios', () => {
+describe('TruthLens — 10 Gemini API Integration & Route Scenarios (AIza + AQ.)', () => {
   const VALID_USER_KEY = 'AIzaValidUserKey_0123456789ABCDEF';
+  const VALID_AQ_KEY = 'AQ.Ab8RN6ValidAqKey_0123456789ABCDEF';
   const VALID_SERVER_KEY = 'AIzaValidServerKey_0123456789ABCDEF';
   const INVALID_KEY = 'AIzaInvalidKey_0123456789ABCDEF';
-  const AQ_OAUTH_TOKEN = 'AQ.Ab8RN6TestOAuthToken0123456789ABCDEF';
+  const RESTRICTED_AQ_KEY = 'AQ.Ab8RN6RestrictedKey_0123456789ABCDEF';
+  const YA29_OAUTH_TOKEN = 'ya29.a0ExampleOAuthToken0123456789ABCDEF';
   const QUOTA_KEY = 'AIzaQuotaExceededKey_0123456789ABCDEF';
 
   function buildStubGeminiClient(apiKey: string, modelOverride?: string): GoogleGenAI {
     return {
       models: {
         async generateContent(params: { model: string; contents: unknown }) {
-          if (apiKey === AQ_OAUTH_TOKEN) {
+          if (apiKey === RESTRICTED_AQ_KEY) {
             throw new Error(
               '401 UNAUTHENTICATED: API key not valid. ACCESS_TOKEN_TYPE_UNSUPPORTED'
             );
           }
           if (apiKey === INVALID_KEY) {
-            throw new Error('401 INVALID_ARGUMENT: API_KEY_INVALID');
+            throw new Error('400 INVALID_ARGUMENT: API_KEY_INVALID');
           }
           if (apiKey === QUOTA_KEY) {
             throw new Error(
@@ -216,6 +248,10 @@ describe('TruthLens — 10 Gemini API Integration & Route Scenarios', () => {
           const targetModel = modelOverride || params.model;
           if (targetModel.includes('unsupported')) {
             throw new Error(`404 NOT_FOUND: models/${targetModel} is not found for API version`);
+          }
+          // Simulate public AIza key where gemini-4-hydrogen is 404 and falls back cleanly to gemini-2.5-flash
+          if (apiKey === VALID_USER_KEY && targetModel === 'gemini-4-hydrogen') {
+            throw new Error('404 NOT_FOUND: models/gemini-4-hydrogen is not found for API version');
           }
 
           if (params.contents === 'Reply with OK.') {
@@ -286,7 +322,10 @@ describe('TruthLens — 10 Gemini API Integration & Route Scenarios', () => {
         },
         async list() {
           async function* emptyGen() {
-            yield { name: 'models/gemini-4-hydrogen', supportedActions: ['generateContent'] };
+            if (apiKey !== VALID_USER_KEY) {
+              yield { name: 'models/gemini-4-hydrogen', supportedActions: ['generateContent'] };
+            }
+            yield { name: 'models/gemini-2.5-flash', supportedActions: ['generateContent'] };
           }
           return emptyGen();
         },
@@ -330,20 +369,31 @@ describe('TruthLens — 10 Gemini API Integration & Route Scenarios', () => {
     });
   });
 
-  it('TEST 1: Valid Gemini API key authentication succeeds', async () => {
-    const res = await fetch(`${baseUrl}/api/test-key`, {
+  it('TEST 1: Valid AIza and AQ. Gemini API key authentication succeeds with automatic model discovery', async () => {
+    const aizaRes = await fetch(`${baseUrl}/api/test-key`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ apiKey: VALID_USER_KEY }),
     });
-    assert.equal(res.status, 200);
-    const body = (await res.json()) as { success: boolean; connectionStatus: string; activeModel: string };
-    assert.equal(body.success, true);
-    assert.equal(body.connectionStatus, 'connected');
-    assert.equal(body.activeModel, 'gemini-4-hydrogen');
+    assert.equal(aizaRes.status, 200);
+    const aizaBody = (await aizaRes.json()) as { success: boolean; connectionStatus: string; activeModel: string };
+    assert.equal(aizaBody.success, true);
+    assert.equal(aizaBody.connectionStatus, 'connected');
+    assert.equal(aizaBody.activeModel, 'gemini-2.5-flash');
+
+    const aqRes = await fetch(`${baseUrl}/api/test-key`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey: VALID_AQ_KEY }),
+    });
+    assert.equal(aqRes.status, 200);
+    const aqBody = (await aqRes.json()) as { success: boolean; connectionStatus: string; activeModel: string };
+    assert.equal(aqBody.success, true);
+    assert.equal(aqBody.connectionStatus, 'connected');
+    assert.equal(aqBody.activeModel, 'gemini-4-hydrogen');
   });
 
-  it('TEST 2: Invalid API key returns clear HTTP 401 authentication error without leaking key', async () => {
+  it('TEST 2: Invalid API key returns HTTP 401 authentication error without leaking key', async () => {
     const res = await fetch(`${baseUrl}/api/test-key`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -356,18 +406,34 @@ describe('TruthLens — 10 Gemini API Integration & Route Scenarios', () => {
     assert.equal(JSON.stringify(body).includes(INVALID_KEY), false);
   });
 
-  it('TEST 3: OAuth token beginning with AQ is tested server-side and rejected with clear Google AI Studio guidance', async () => {
-    const res = await fetch(`${baseUrl}/api/test-key`, {
+  it('TEST 3: OAuth token (ya29) and unpermitted AQ credential are rejected with clear guidance', async () => {
+    const ya29Res = await fetch(`${baseUrl}/api/test-key`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ apiKey: AQ_OAUTH_TOKEN }),
+      body: JSON.stringify({ apiKey: YA29_OAUTH_TOKEN }),
     });
-    assert.equal(res.status, 401);
-    const body = (await res.json()) as { success: boolean; connectionStatus: string; message: string };
-    assert.equal(body.success, false);
-    assert.equal(body.connectionStatus, 'invalid_key');
-    assert.ok(body.message.includes('Google AI Studio'));
-    assert.equal(JSON.stringify(body).includes(AQ_OAUTH_TOKEN), false);
+    assert.equal(ya29Res.status, 401);
+    const ya29Body = (await ya29Res.json()) as { success: boolean; connectionStatus: string; message: string };
+    assert.equal(ya29Body.success, false);
+    assert.equal(ya29Body.connectionStatus, 'invalid_key');
+    assert.ok(ya29Body.message.includes('Google AI Studio'));
+    assert.equal(JSON.stringify(ya29Body).includes(YA29_OAUTH_TOKEN), false);
+
+    const restrictedRes = await fetch(`${baseUrl}/api/test-key`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey: RESTRICTED_AQ_KEY }),
+    });
+    assert.equal(restrictedRes.status, 401);
+    const restrictedBody = (await restrictedRes.json()) as {
+      success: boolean;
+      connectionStatus: string;
+      message: string;
+    };
+    assert.equal(restrictedBody.success, false);
+    assert.equal(restrictedBody.connectionStatus, 'invalid_key');
+    assert.ok(restrictedBody.message.includes('Generative Language API'));
+    assert.equal(JSON.stringify(restrictedBody).includes(RESTRICTED_AQ_KEY), false);
   });
 
   it('TEST 4: No user key falls back to valid server environment key', async () => {
@@ -420,8 +486,8 @@ describe('TruthLens — 10 Gemini API Integration & Route Scenarios', () => {
     }
   });
 
-  it('TEST 6: Invalid user key with valid server key displays user-key error without silently switching', async () => {
-    const res = await fetch(`${baseUrl}/api/analyze`, {
+  it('TEST 6: Invalid user key or OAuth token with valid server key displays user-key error without silently switching', async () => {
+    const resInvalid = await fetch(`${baseUrl}/api/analyze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -431,11 +497,35 @@ describe('TruthLens — 10 Gemini API Integration & Route Scenarios', () => {
         apiKey: INVALID_KEY,
       }),
     });
-    assert.equal(res.status, 401);
-    const body = (await res.json()) as { code: string; keySource: string; message: string };
-    assert.equal(body.code, 'INVALID_KEY');
-    assert.equal(body.keySource, 'user');
-    assert.ok(body.message.includes('User API key error'));
+    assert.equal(resInvalid.status, 401);
+    const bodyInvalid = (await resInvalid.json()) as {
+      code: string;
+      keySource: string;
+      message: string;
+    };
+    assert.equal(bodyInvalid.code, 'INVALID_KEY');
+    assert.equal(bodyInvalid.keySource, 'user');
+    assert.ok(bodyInvalid.message.includes('User API key error'));
+
+    const resOAuth = await fetch(`${baseUrl}/api/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        submissionType: 'text',
+        text: 'Lemon water cures kidney disease.',
+        category: 'Health',
+        apiKey: YA29_OAUTH_TOKEN,
+      }),
+    });
+    assert.equal(resOAuth.status, 401);
+    const bodyOAuth = (await resOAuth.json()) as {
+      code: string;
+      keySource: string;
+      message: string;
+    };
+    assert.equal(bodyOAuth.code, 'INVALID_KEY');
+    assert.equal(bodyOAuth.keySource, 'user');
+    assert.ok(bodyOAuth.message.includes('OAuth access tokens'));
   });
 
   it('TEST 7: API quota exceeded returns clear HTTP 429 quota error', async () => {
@@ -467,7 +557,7 @@ describe('TruthLens — 10 Gemini API Integration & Route Scenarios', () => {
     }
   });
 
-  it('TEST 9: Actual claim analysis returns complete schema with grounded citations', async () => {
+  it('TEST 9: Actual claim analysis returns complete schema with grounded citations using AIza key', async () => {
     const res = await fetch(`${baseUrl}/api/analyze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -490,7 +580,6 @@ describe('TruthLens — 10 Gemini API Integration & Route Scenarios', () => {
   });
 
   it('TEST 10: Removing user API key clears override and restores valid server-key fallback', async () => {
-    // Request with no user apiKey after clearing user session key falls back to server key cleanly
     const healthRes = await fetch(`${baseUrl}/api/health?verify=1&refresh=1`);
     const healthBody = (await healthRes.json()) as { serverKeyStatus: string };
     assert.equal(healthBody.serverKeyStatus, 'verified');

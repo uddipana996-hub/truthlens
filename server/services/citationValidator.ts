@@ -76,6 +76,10 @@ export function extractVerifiedGroundingSources(
  * Validates model-provided source IDs and annotations against the server's verified grounded source catalog.
  * Unknown or hallucinated source IDs are strictly discarded.
  */
+function normalizeSourceId(rawId: string): string {
+  return rawId.trim().replace(/^\[+|\]+$/g, '').toUpperCase();
+}
+
 export function validateAndBuildSources(
   groundedRecords: GroundedChunkRecord[],
   annotations: Array<{
@@ -93,8 +97,9 @@ export function validateAndBuildSources(
   const annotationMap = new Map<string, (typeof annotations)[number]>();
 
   for (const ann of annotations) {
-    if (recordMap.has(ann.sourceId) && !annotationMap.has(ann.sourceId)) {
-      annotationMap.set(ann.sourceId, ann);
+    const normalizedId = normalizeSourceId(ann.sourceId);
+    if (recordMap.has(normalizedId) && !annotationMap.has(normalizedId)) {
+      annotationMap.set(normalizedId, { ...ann, sourceId: normalizedId });
     }
   }
 
@@ -132,7 +137,8 @@ export function validateAndBuildSources(
 export function filterValidSourceIds(ids: string[], validSourceIds: Set<string>): string[] {
   const seen = new Set<string>();
   const valid: string[] = [];
-  for (const id of ids) {
+  for (const rawId of ids) {
+    const id = normalizeSourceId(rawId);
     if (validSourceIds.has(id) && !seen.has(id)) {
       seen.add(id);
       valid.push(id);

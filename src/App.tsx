@@ -1,7 +1,9 @@
 import { useState } from 'react';
+import { ApiKeyModal } from './components/ApiKeyModal';
 import { Footer } from './components/Footer';
 import { Navbar, type AppRoute } from './components/Navbar';
 import { NetworkParticlesCanvas } from './components/NetworkParticlesCanvas';
+import { ApiKeyProvider } from './context/ApiKeyContext';
 import { AboutPage } from './pages/AboutPage';
 import { AnalyzerPage } from './pages/AnalyzerPage';
 import { HomePage } from './pages/HomePage';
@@ -116,10 +118,15 @@ function AppShell() {
       </main>
 
       <Footer onNavigate={handleNavigate} />
+      <ApiKeyModal />
     </div>
   );
 }
 
 export default function App() {
-  return <AppShell />;
+  return (
+    <ApiKeyProvider>
+      <AppShell />
+    </ApiKeyProvider>
+  );
 }

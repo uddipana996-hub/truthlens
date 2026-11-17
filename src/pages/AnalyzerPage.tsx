@@ -7,6 +7,7 @@ import {
   Cpu,
   FileText,
   Image as ImageIcon,
+  KeyRound,
   Link2,
   Loader2,
   Play,
@@ -16,6 +17,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { MiniMicrochipCore, MiniRoboticArmNode } from '../components/Mini3DModels';
+import { useApiKey } from '../context/ApiKeyContext';
 import {
   DEMO_REPORTS,
   buildCustomDemoReport,
@@ -76,6 +78,14 @@ const SCAN_STAGES = [
 ];
 
 export function AnalyzerPage({ onAnalysisComplete }: AnalyzerPageProps) {
+  const {
+    sessionApiKey,
+    connectionState,
+    statusMessage,
+    hasEffectiveKey,
+    openModal,
+  } = useApiKey();
+
   const [activeTab, setActiveTab] = useState<SubmissionType>('text');
   const [category, setCategory] = useState<ClaimCategory>('General');
   const [textInput, setTextInput] = useState<string>('');
@@ -93,7 +103,7 @@ export function AnalyzerPage({ onAnalysisComplete }: AnalyzerPageProps) {
   } | null>(null);
   const [imageNotes, setImageNotes] = useState<string>('');
 
-  const [scanMode, setScanMode] = useState<'idle' | 'demo'>('idle');
+  const [scanMode, setScanMode] = useState<'idle' | 'live' | 'demo'>('idle');
   const [scanProgress, setScanProgress] = useState<number>(0);
   const [scanCompleted, setScanCompleted] = useState<boolean>(false);
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
@@ -124,6 +134,22 @@ export function AnalyzerPage({ onAnalysisComplete }: AnalyzerPageProps) {
     }, 1000);
     return () => window.clearInterval(interval);
   }, [isScanning]);
+
+  useEffect(() => {
+    if (scanMode !== 'live') return;
+    if (scanCompleted) {
+      setScanProgress(100);
+      return;
+    }
+    setScanProgress(12);
+    const progressTimer = window.setInterval(() => {
+      setScanProgress((prev) => {
+        if (prev >= 92) return 92;
+        return Math.min(92, prev + Math.max(2, Math.round((92 - prev) * 0.14)));
+      });
+    }, 350);
+    return () => window.clearInterval(progressTimer);
+  }, [scanMode, scanCompleted]);
 
   useEffect(() => {
     return () => {
@@ -338,7 +364,7 @@ export function AnalyzerPage({ onAnalysisComplete }: AnalyzerPageProps) {
     }
   };
 
-  const handleAnalyze = (e: React.FormEvent) => {
+  const handleAnalyze = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorBanner(null);
 
@@ -352,13 +378,140 @@ export function AnalyzerPage({ onAnalysisComplete }: AnalyzerPageProps) {
       return;
     }
 
-    if (activeTab === 'image' && !imagePayload && imageNotes.trim().length < 5) {
-      setErrorBanner('Please upload a PNG, JPG, JPEG, or WebP screenshot or add claim notes.');
+    if (activeTab === 'image' && !imagePayload) {
+      setErrorBanner('Please upload a PNG, JPG, JPEG, or WebP screenshot.');
       return;
     }
 
-    handleRunDemoScan();
+    if (!hasEffectiveKey) {
+      setErrorBanner(
+        'No Gemini API key is configured. Open API Key Settings to enter your key (AIza... or AQ....), or click "Run Demo Scan".'
+      );
+      return;
+    }
+
+    setScanMode('live');
+    setScanCompleted(false);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 90_000);
+
+    try {
+      const requestBody: Record<string, unknown> = {
+        submissionType: activeTab,
+        category,
+      };
+
+      if (activeTab === 'text') {
+        requestBody.text = textInput.trim();
+      } else if (activeTab === 'url') {
+        requestBody.url = urlInput.trim();
+        requestBody.text = urlFallbackText.trim();
+      } else if (activeTab === 'image' && imagePayload) {
+        requestBody.text = imageNotes.trim();
+        requestBody.imageData = {
+          mimeType: imagePayload.mimeType,
+          base64: imagePayload.base64,
+        };
+      }
+
+      if (sessionApiKey.trim()) {
+        requestBody.apiKey = sessionApiKey.trim();
+      }
+
+      const response = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal,
+      });
+
+      const rawText = await response.text();
+      let data: Record<string, unknown> | null = null;
+      try {
+        data = rawText ? (JSON.parse(rawText) as Record<string, unknown>) : null;
+      } catch {
+        data = null;
+      }
+
+      if (!response.ok || !data) {
+        if (data && data.code === 'URL_EXTRACTION_UNAVAILABLE' && data.extraction) {
+          setExtractionResult(data.extraction as SocialExtractionResult);
+        }
+        const serverMessage =
+          data && typeof data.message === 'string' && data.message
+            ? data.message
+            : `Analysis request failed (HTTP ${response.status})${
+                rawText && !data ? `: ${rawText.slice(0, 140)}` : '.'
+              }`;
+        setErrorBanner(serverMessage);
+        setScanCompleted(false);
+        setScanMode('idle');
+        setScanProgress(0);
+        return;
+      }
+
+      setScanCompleted(true);
+      setScanProgress(100);
+      const t = window.setTimeout(() => {
+        setScanMode('idle');
+        setScanCompleted(false);
+        setScanProgress(0);
+        onAnalysisComplete(data as unknown as FactCheckResponse);
+      }, 360);
+      demoTimersRef.current.push(t);
+    } catch (err) {
+      const isAbort = err instanceof DOMException && err.name === 'AbortError';
+      setErrorBanner(
+        isAbort
+          ? 'Fact-check request timed out after 90 seconds. Please try again with a shorter claim or run Demo Scan.'
+          : err instanceof Error
+            ? `Failed to reach /api/analyze (${err.message}). Verify the backend server is running.`
+            : 'Network error while running fact-check analysis.'
+      );
+      setScanCompleted(false);
+      setScanMode('idle');
+      setScanProgress(0);
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
   };
+
+  const apiStatusLabel = (() => {
+    switch (connectionState) {
+      case 'user-verified':
+        return 'Connected — User API Key';
+      case 'server-verified':
+        return 'Connected — Server Environment Key';
+      case 'user-untested':
+        return 'User key saved (Unverified)';
+      case 'user-invalid-key':
+      case 'server-invalid-key':
+        return 'Invalid API Key';
+      case 'user-auth-failed':
+      case 'server-auth-failed':
+        return 'Authentication Failed';
+      case 'user-quota-exceeded':
+      case 'server-quota-exceeded':
+        return 'API Quota Exceeded';
+      case 'user-model-unavailable':
+      case 'server-model-unavailable':
+        return 'Model Unavailable';
+      case 'user-connection-failed':
+      case 'server-connection-failed':
+        return 'Connection Failed';
+      case 'checking':
+        return 'Checking API connection...';
+      default:
+        return 'API Key Settings';
+    }
+  })();
+
+  const isConnectionVerified =
+    connectionState === 'user-verified' || connectionState === 'server-verified';
+  const hasConnectionProblem =
+    !isConnectionVerified &&
+    connectionState !== 'checking' &&
+    connectionState !== 'user-untested';
 
   const activeStageIndex = Math.min(
     SCAN_STAGES.length - 1,
@@ -372,7 +525,7 @@ export function AnalyzerPage({ onAnalysisComplete }: AnalyzerPageProps) {
       transition={{ duration: 0.22 }}
       className="mx-auto max-w-5xl px-4 py-10 sm:px-6 space-y-8"
     >
-      {/* Header & Local Mode Indicator */}
+      {/* Header & Key Connection Status */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between border-b border-slate-200/85 pb-6">
         <div className="flex items-start gap-3.5">
           <div className="hidden sm:flex rounded-2xl border border-slate-200/85 bg-white/90 p-1.5 shadow-2xs">
@@ -383,17 +536,67 @@ export function AnalyzerPage({ onAnalysisComplete }: AnalyzerPageProps) {
               Investigate a Claim
             </h1>
             <p className="mt-1 text-sm text-slate-600">
-              Submit text, a public post URL, or a screenshot to run an interactive local TruthLens
-              scan and explore structured sample reports.
+              Submit text, a public post URL, or a screenshot for live evidence-grounded verification—or
+              run an offline Demo Scan anytime.
             </p>
           </div>
         </div>
 
-        <div className="inline-flex items-center gap-2 rounded-xl border border-blue-200/85 bg-blue-50/75 px-3.5 py-2 text-xs font-medium text-[#1D4ED8] whitespace-nowrap shrink-0 self-start sm:self-auto">
-          <Cpu className="h-3.5 w-3.5 text-[#2563EB]" aria-hidden="true" />
-          <span>Interactive Demo Mode</span>
-        </div>
+        <button
+          type="button"
+          onClick={openModal}
+          className={`inline-flex items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-medium whitespace-nowrap shrink-0 self-start sm:self-auto transition-colors ${
+            isConnectionVerified
+              ? 'border-emerald-200 bg-emerald-50/80 text-emerald-900 hover:bg-emerald-100/70'
+              : hasConnectionProblem
+                ? 'border-rose-200 bg-rose-50/80 text-rose-900 hover:bg-rose-100/70'
+                : 'lab-btn-secondary'
+          }`}
+        >
+          <KeyRound
+            className={`h-3.5 w-3.5 ${
+              isConnectionVerified
+                ? 'text-emerald-600'
+                : hasConnectionProblem
+                  ? 'text-rose-600'
+                  : 'text-[#2563EB]'
+            }`}
+            aria-hidden="true"
+          />
+          <span>{apiStatusLabel}</span>
+        </button>
       </div>
+
+      {hasConnectionProblem && !errorBanner && (
+        <div
+          role="status"
+          className="flex flex-col gap-2.5 rounded-2xl border border-amber-200 bg-amber-50/90 p-4 text-xs text-amber-950 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-amber-700" aria-hidden="true" />
+            <div>
+              <span className="font-semibold">{apiStatusLabel}: </span>
+              <span>{statusMessage}</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={openModal}
+              className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-amber-950 hover:bg-amber-100/70 whitespace-nowrap"
+            >
+              Configure Working Key
+            </button>
+            <button
+              type="button"
+              onClick={() => handleRunDemoScan()}
+              className="rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-[#1D4ED8] hover:bg-blue-50 whitespace-nowrap"
+            >
+              Run Demo Scan
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main Submission Workspace */}
       <form
@@ -673,10 +876,28 @@ export function AnalyzerPage({ onAnalysisComplete }: AnalyzerPageProps) {
         {errorBanner && (
           <div
             role="alert"
-            className="flex items-start gap-2.5 rounded-xl border border-rose-200 bg-rose-50 p-3.5 text-xs leading-relaxed text-rose-800"
+            className="flex flex-col gap-2.5 rounded-xl border border-rose-200 bg-rose-50 p-3.5 text-xs leading-relaxed text-rose-800 sm:flex-row sm:items-center sm:justify-between"
           >
-            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-rose-600" aria-hidden="true" />
-            <span>{errorBanner}</span>
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-rose-600" aria-hidden="true" />
+              <span>{errorBanner}</span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => handleRunDemoScan()}
+                className="rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-[#1D4ED8] hover:bg-blue-50 whitespace-nowrap"
+              >
+                Run Demo Scan
+              </button>
+              <button
+                type="button"
+                onClick={openModal}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 whitespace-nowrap"
+              >
+                API Key Settings
+              </button>
+            </div>
           </div>
         )}
 
@@ -701,7 +922,9 @@ export function AnalyzerPage({ onAnalysisComplete }: AnalyzerPageProps) {
                     <p className="font-display text-sm font-bold text-slate-900">
                       {scanCompleted
                         ? 'Scan complete — Opening report'
-                        : 'Running Frontend Demo Scan (Sample Mode)'}
+                        : scanMode === 'demo'
+                          ? 'Running Frontend Demo Scan (Sample Mode)'
+                          : 'Running Live Verification Pipeline'}
                     </p>
                     <p className="text-[11px] font-normal text-slate-600">
                       Stage: {SCAN_STAGES[activeStageIndex]}
@@ -710,9 +933,11 @@ export function AnalyzerPage({ onAnalysisComplete }: AnalyzerPageProps) {
                 </div>
 
                 <div className="flex items-center gap-3 font-mono text-xs tabular-nums">
-                  <span className="rounded border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#0284C7]">
-                    DEMO
-                  </span>
+                  {scanMode === 'demo' && (
+                    <span className="rounded border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#0284C7]">
+                      DEMO
+                    </span>
+                  )}
                   <span className="font-semibold text-[#2563EB]">{scanProgress}%</span>
                   <span className="text-slate-500">{elapsedSeconds}s</span>
                 </div>
@@ -793,12 +1018,12 @@ export function AnalyzerPage({ onAnalysisComplete }: AnalyzerPageProps) {
               disabled={isScanning}
               className="lab-btn-primary inline-flex items-center gap-2 rounded-xl px-6 py-2.5 text-sm font-semibold disabled:opacity-50 whitespace-nowrap shrink-0"
             >
-              {isScanning ? (
+              {scanMode === 'live' ? (
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
               ) : (
                 <Search className="h-4 w-4" aria-hidden="true" />
               )}
-              <span>{isScanning ? 'Scanning Content...' : 'Analyze'}</span>
+              <span>{scanMode === 'live' ? 'Analyzing Evidence...' : 'Analyze'}</span>
             </button>
           </div>
         </div>
@@ -808,7 +1033,7 @@ export function AnalyzerPage({ onAnalysisComplete }: AnalyzerPageProps) {
       <section aria-labelledby="samples-heading" className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 id="samples-heading" className="font-display text-sm font-semibold text-slate-600">
-            Interactive Demo Samples (Local Preview)
+            Interactive Demo Samples (Offline · No API Key Required)
           </h2>
           <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
             <Cpu className="h-3.5 w-3.5 text-[#0284C7]" aria-hidden="true" />

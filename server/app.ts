@@ -24,6 +24,7 @@ import {
 import { runFactCheckPipeline, type PipelineInput } from './services/factCheckPipeline.js';
 import {
   GeminiPipelineError,
+  isObviousOAuthToken,
   resolveActiveApiKey,
   resolveGeminiModel,
   testGeminiKey,
@@ -236,7 +237,20 @@ export function createApiApp(deps?: ApiAppDependencies) {
         status: 'error',
         code: 'MISSING_API_KEY',
         message:
-          'No Gemini API key is configured. Open API Key Settings to enter your own session key, or configure GEMINI_API_KEY on the server.',
+          'No Gemini API key is configured. Open API Key Settings to enter your own key (https://aistudio.google.com/apikey), or set GEMINI_API_KEY on the server.',
+      });
+      return;
+    }
+
+    if (isObviousOAuthToken(keyResolution.apiKey)) {
+      res.status(401).json({
+        status: 'error',
+        code: 'INVALID_KEY',
+        keySource: keyResolution.source,
+        message:
+          keyResolution.source === 'user'
+            ? 'User API key error: OAuth access tokens (ya29..., Bearer, or 1//...) are not Gemini API keys. Generate a standard key at Google AI Studio (https://aistudio.google.com/apikey).'
+            : 'Server API key error: Configured credential appears to be an OAuth token rather than a Gemini API key.',
       });
       return;
     }

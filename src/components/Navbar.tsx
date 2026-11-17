@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { ArrowRight, Menu, X } from 'lucide-react';
+import { KeyRound, Menu, X } from 'lucide-react';
+import { useApiKey } from '../context/ApiKeyContext';
 import { BrandLogo } from './BrandLogo';
 
 export type AppRoute = 'home' | 'analyze' | 'how-it-works' | 'about';
@@ -17,7 +18,17 @@ const NAV_ITEMS: Array<{ id: AppRoute; label: string }> = [
 ];
 
 export function Navbar({ activeRoute, onNavigate }: NavbarProps) {
+  const { connectionState, openModal } = useApiKey();
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  const keyLabel =
+    connectionState === 'user-verified'
+      ? 'Key Ready'
+      : connectionState === 'user-untested'
+        ? 'Session Key'
+        : connectionState === 'server-verified'
+          ? 'Key Ready'
+          : 'API Key Settings';
 
   const handleSelect = (route: AppRoute) => {
     onNavigate(route);
@@ -71,11 +82,11 @@ export function Navbar({ activeRoute, onNavigate }: NavbarProps) {
         <div className="flex items-center gap-3 shrink-0">
           <button
             type="button"
-            onClick={() => handleSelect('analyze')}
-            className="lab-btn-primary inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-semibold whitespace-nowrap shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+            onClick={openModal}
+            className="lab-btn-secondary inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold whitespace-nowrap shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
           >
-            <span>Analyze Claim</span>
-            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+            <KeyRound className="h-3.5 w-3.5 text-[#2563EB]" aria-hidden="true" />
+            <span>{keyLabel}</span>
           </button>
 
           <button

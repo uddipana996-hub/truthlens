@@ -156,8 +156,8 @@ export function HowItWorksPage({ onNavigate }: HowItWorksPageProps) {
             <li className="flex items-start gap-2.5">
               <ShieldAlert className="h-4 w-4 text-[#2563EB] mt-0.5 shrink-0" aria-hidden="true" />
               <span>
-                Submitted claims and screenshots are never stored in a database or persistent browser
-                storage.
+                Submitted claims, screenshots, and session API keys are never stored in a database or
+                persistent browser storage.
               </span>
             </li>
           </ul>
